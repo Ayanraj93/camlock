@@ -113,7 +113,7 @@ class MainActivity : Activity() {
         root.addView(
             tv(
                 if (on) "Guard: ruka hua (session chal raha hai)"
-                else "Guard: " + if (Policy.guardRunning()) "chalu (har 0.3 sec camera band)" else "band",
+                else "Guard: " + if (Policy.guardRunning()) "chalu (har 1 sec camera band)" else "band",
                 14f
             )
         )

@@ -53,7 +53,7 @@ object Policy {
             sh(KILL)
             sh(
                 "nohup sh -c 'while true; do cmd sensor_privacy enable 0 camera " +
-                    ">/dev/null 2>&1; sleep 0.3 || sleep 1; done # CAMLOCK_GUARD' " +
+                    ">/dev/null 2>&1; sleep 1; done # CAMLOCK_GUARD' " +
                     ">/dev/null 2>&1 </dev/null &"
             )
         } catch (e: Throwable) {
