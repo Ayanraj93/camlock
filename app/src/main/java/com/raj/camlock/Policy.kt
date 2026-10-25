@@ -12,13 +12,15 @@ import rikka.shizuku.Shizuku
 object Policy {
     private fun prefs(c: Context) = c.getSharedPreferences("camlock", Context.MODE_PRIVATE)
 
+    // ---------- Shizuku ----------
     fun shizukuReady(): Boolean = try { Shizuku.pingBinder() } catch (e: Throwable) { false }
 
     fun hasPermission(): Boolean = try {
         Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
     } catch (e: Throwable) { false }
 
-    // Shizuku ke zariye shell command chalao
+    fun usable() = shizukuReady() && hasPermission()
+
     private fun sh(cmd: String): Pair<Int, String> {
         val m = Shizuku::class.java.getDeclaredMethod(
             "newProcess",
@@ -35,29 +37,66 @@ object Policy {
 
     fun isOn(c: Context) = prefs(c).getBoolean("on", false)
 
-    // enabled=true -> camera chalu (privacy block hatao), false -> camera band
+    // ---------- Guard: camera band rakhne wala loop (har 1 second) ----------
+    // Marker ke [D] ka trick: pkill/pgrep khud ko match nahi karte.
+    private const val KILL = "pkill -f 'CAMLOCK_GUAR[D]'"
+
+    @Synchronized
+    fun stopGuard() {
+        try { sh(KILL) } catch (_: Throwable) {}
+    }
+
+    @Synchronized
+    fun startGuard(c: Context) {
+        if (!usable() || isOn(c)) return
+        try {
+            sh(KILL)
+            sh(
+                "nohup sh -c 'while true; do cmd sensor_privacy enable 0 camera " +
+                    ">/dev/null 2>&1; sleep 1; done # CAMLOCK_GUARD' " +
+                    ">/dev/null 2>&1 </dev/null &"
+            )
+        } catch (e: Throwable) {
+            log(c, "Guard error: ${e.message}")
+        }
+    }
+
+    fun guardRunning(): Boolean = try {
+        usable() && sh("pgrep -f 'CAMLOCK_GUAR[D]'").first == 0
+    } catch (e: Throwable) { false }
+
+    // ---------- Camera ON / OFF ----------
+    @Synchronized
     fun setCamera(c: Context, enabled: Boolean): Boolean {
-        if (!shizukuReady() || !hasPermission()) {
+        if (!usable()) {
             log(c, "Shizuku ready nahi")
             return false
         }
         return try {
+            if (enabled) {
+                stopGuard()
+                Thread.sleep(300)
+            }
             val verb = if (enabled) "disable" else "enable"
             val (code, out) = sh("cmd sensor_privacy $verb 0 camera 2>&1")
             if (code != 0) {
                 log(c, "Error: $out")
+                if (enabled) startGuard(c)
                 false
             } else {
                 prefs(c).edit().putBoolean("on", enabled).apply()
                 log(c, if (enabled) "Camera ON" else "Camera OFF")
+                if (!enabled) startGuard(c)
                 true
             }
         } catch (e: Throwable) {
             log(c, "Error: ${e.message}")
+            if (enabled) startGuard(c)
             false
         }
     }
 
+    // ---------- Password ----------
     fun hasPassword(c: Context) = prefs(c).contains("hash")
 
     private fun hash(salt: String, pw: String): String =
@@ -76,6 +115,7 @@ object Policy {
         return hash(salt, pw) == p.getString("hash", "")
     }
 
+    // ---------- Log ----------
     fun log(c: Context, msg: String) {
         val t = SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault()).format(Date())
         val old = (prefs(c).getString("log", "") ?: "")

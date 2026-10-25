@@ -27,6 +27,10 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // Session nahi chal raha to Guard chalu rakho
+        if (Policy.usable() && !Policy.isOn(this)) {
+            Thread { Policy.startGuard(applicationContext) }.start()
+        }
         render()
     }
 
@@ -62,7 +66,6 @@ class MainActivity : Activity() {
         setContentView(sv)
         root.addView(tv("CamLock", 28f))
 
-        // 1) Shizuku chal raha hai?
         if (!Policy.shizukuReady()) {
             root.addView(
                 tv(
@@ -74,7 +77,6 @@ class MainActivity : Activity() {
             return
         }
 
-        // 2) Shizuku permission
         if (!Policy.hasPermission()) {
             root.addView(tv("CamLock ko Shizuku ki permission chahiye."))
             root.addView(btn("Shizuku permission do") {
@@ -84,7 +86,6 @@ class MainActivity : Activity() {
             return
         }
 
-        // 3) Pehli baar password
         if (!Policy.hasPassword(this)) {
             root.addView(tv("Pehle apna password set karo (kam se kam 4 akshar)."))
             val p1 = edit("Naya password", true)
@@ -107,9 +108,15 @@ class MainActivity : Activity() {
             return
         }
 
-        // 4) Main screen
         val on = Policy.isOn(this)
         root.addView(tv(if (on) "Camera: ON" else "Camera: OFF (band)", 22f))
+        root.addView(
+            tv(
+                if (on) "Guard: ruka hua (session chal raha hai)"
+                else "Guard: " + if (Policy.guardRunning()) "chalu (har 1 sec camera band)" else "band",
+                14f
+            )
+        )
 
         val pw = edit("Password", true)
         val mins = edit("Kitne minute (1 se 240)", false)
