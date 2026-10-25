@@ -1,38 +1,61 @@
 package com.raj.camlock
 
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import rikka.shizuku.Shizuku
 
 object Policy {
-    private fun dpm(c: Context) =
-        c.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-
-    private fun admin(c: Context) = ComponentName(c, AdminReceiver::class.java)
     private fun prefs(c: Context) = c.getSharedPreferences("camlock", Context.MODE_PRIVATE)
 
-    fun isOwner(c: Context) = dpm(c).isDeviceOwnerApp(c.packageName)
+    fun shizukuReady(): Boolean = try { Shizuku.pingBinder() } catch (e: Throwable) { false }
 
-    fun isCameraEnabled(c: Context) =
-        !isOwner(c) || !dpm(c).getCameraDisabled(admin(c))
+    fun hasPermission(): Boolean = try {
+        Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+    } catch (e: Throwable) { false }
 
-    fun setCamera(c: Context, enabled: Boolean): Boolean {
-        if (!isOwner(c)) return false
-        dpm(c).setCameraDisabled(admin(c), !enabled)
-        log(c, if (enabled) "Camera ON" else "Camera OFF")
-        return true
+    // Shizuku ke zariye shell command chalao
+    private fun sh(cmd: String): Pair<Int, String> {
+        val m = Shizuku::class.java.getDeclaredMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java
+        )
+        m.isAccessible = true
+        val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+        val out = p.inputStream.bufferedReader().readText()
+        val code = p.waitFor()
+        return code to out.trim()
     }
 
-    fun clearOwner(c: Context) {
-        if (!isOwner(c)) return
-        dpm(c).setCameraDisabled(admin(c), false)
-        @Suppress("DEPRECATION")
-        dpm(c).clearDeviceOwnerApp(c.packageName)
+    fun isOn(c: Context) = prefs(c).getBoolean("on", false)
+
+    // enabled=true -> camera chalu (privacy block hatao), false -> camera band
+    fun setCamera(c: Context, enabled: Boolean): Boolean {
+        if (!shizukuReady() || !hasPermission()) {
+            log(c, "Shizuku ready nahi")
+            return false
+        }
+        return try {
+            val verb = if (enabled) "disable" else "enable"
+            val (code, out) = sh("cmd sensor_privacy $verb 0 camera 2>&1")
+            if (code != 0) {
+                log(c, "Error: $out")
+                false
+            } else {
+                prefs(c).edit().putBoolean("on", enabled).apply()
+                log(c, if (enabled) "Camera ON" else "Camera OFF")
+                true
+            }
+        } catch (e: Throwable) {
+            log(c, "Error: ${e.message}")
+            false
+        }
     }
 
     fun hasPassword(c: Context) = prefs(c).contains("hash")
@@ -61,4 +84,6 @@ object Policy {
     }
 
     fun logText(c: Context): String = prefs(c).getString("log", "") ?: ""
+
+    fun lastLine(c: Context): String = logText(c).lines().firstOrNull() ?: ""
 }

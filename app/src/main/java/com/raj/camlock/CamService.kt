@@ -90,6 +90,7 @@ class CamService : Service() {
 
     private fun finish() {
         handler.removeCallbacksAndMessages(null)
+        Policy.setCamera(this, false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -100,7 +101,7 @@ class CamService : Service() {
             registered = false
         }
         // Service kisi bhi wajah se band ho, camera band hi rahe
-        Policy.setCamera(this, false)
+        if (Policy.isOn(this)) Policy.setCamera(this, false)
         super.onDestroy()
     }
 }

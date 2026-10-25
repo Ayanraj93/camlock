@@ -6,13 +6,13 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
-import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import rikka.shizuku.Shizuku
 
 class MainActivity : Activity() {
 
@@ -62,19 +62,29 @@ class MainActivity : Activity() {
         setContentView(sv)
         root.addView(tv("CamLock", 28f))
 
-        // 1) Device Owner check
-        if (!Policy.isOwner(this)) {
+        // 1) Shizuku chal raha hai?
+        if (!Policy.shizukuReady()) {
             root.addView(
                 tv(
-                    "Ye app abhi Device Owner nahi hai. Termux me ye chalao:\n\n" +
-                        "adb shell dpm set-device-owner com.raj.camlock/.AdminReceiver\n\n" +
-                        "(Pehle phone se saare accounts hata do.)"
+                    "Shizuku chalu nahi hai.\n\nShizuku app kholo -> " +
+                        "\"Start via Wireless debugging\" -> phir yahan wapas aao."
                 )
             )
+            root.addView(btn("Dobara check karo") { render() })
             return
         }
 
-        // 2) Pehli baar password set karo
+        // 2) Shizuku permission
+        if (!Policy.hasPermission()) {
+            root.addView(tv("CamLock ko Shizuku ki permission chahiye."))
+            root.addView(btn("Shizuku permission do") {
+                try { Shizuku.requestPermission(100) } catch (e: Throwable) { toast("Error: ${e.message}") }
+            })
+            root.addView(btn("Permission de di, dobara check karo") { render() })
+            return
+        }
+
+        // 3) Pehli baar password
         if (!Policy.hasPassword(this)) {
             root.addView(tv("Pehle apna password set karo (kam se kam 4 akshar)."))
             val p1 = edit("Naya password", true)
@@ -97,8 +107,8 @@ class MainActivity : Activity() {
             return
         }
 
-        // 3) Main screen
-        val on = Policy.isCameraEnabled(this)
+        // 4) Main screen
+        val on = Policy.isOn(this)
         root.addView(tv(if (on) "Camera: ON" else "Camera: OFF (band)", 22f))
 
         val pw = edit("Password", true)
@@ -113,7 +123,11 @@ class MainActivity : Activity() {
                 return@btn
             }
             val m = (mins.text.toString().toIntOrNull() ?: 5).coerceIn(1, 240)
-            Policy.setCamera(this, true)
+            if (!Policy.setCamera(this, true)) {
+                toast("Camera ON nahi hua: " + Policy.lastLine(this))
+                render()
+                return@btn
+            }
             startForegroundService(
                 Intent(this, CamService::class.java)
                     .putExtra("endAt", System.currentTimeMillis() + m * 60_000L)
@@ -123,24 +137,12 @@ class MainActivity : Activity() {
         })
 
         root.addView(btn("Camera OFF karo") {
-            Policy.setCamera(this, false)
+            if (!Policy.setCamera(this, false)) toast("Error: " + Policy.lastLine(this))
             startService(Intent(this, CamService::class.java).setAction(CamService.ACTION_STOP))
             render()
         })
 
         root.addView(tv("\nRecord (naya upar):", 16f))
         root.addView(tv(Policy.logText(this).ifBlank { "abhi kuch nahi" }, 13f))
-
-        root.addView(View(this).apply { minimumHeight = dp(24) })
-        root.addView(btn("Device Owner hatao (password chahiye)") {
-            if (!Policy.check(this, pw.text.toString())) {
-                toast("Upar password daalo, phir dabao")
-                return@btn
-            }
-            startService(Intent(this, CamService::class.java).setAction(CamService.ACTION_STOP))
-            Policy.clearOwner(this)
-            toast("Device Owner hat gaya, camera normal")
-            render()
-        })
     }
 }
