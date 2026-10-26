@@ -10,21 +10,22 @@ import java.util.Locale
 import java.util.UUID
 
 object Policy {
-    private fun dpm(c: Context) =
+    fun dpm(c: Context) =
         c.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
 
-    private fun admin(c: Context) = ComponentName(c, AdminReceiver::class.java)
+    fun admin(c: Context) = ComponentName(c, AdminReceiver::class.java)
     private fun prefs(c: Context) = c.getSharedPreferences("camlock", Context.MODE_PRIVATE)
 
-    fun isOwner(c: Context) = dpm(c).isDeviceOwnerApp(c.packageName)
+    // Check karein ki Device Admin active hai ya nahi
+    fun isAdmin(c: Context) = dpm(c).isAdminActive(admin(c))
 
-    // Camera chalu hai? (asli system state)
-    fun isOn(c: Context) = isOwner(c) && !dpm(c).getCameraDisabled(admin(c))
+    // Camera chalu hai?
+    fun isOn(c: Context) = isAdmin(c) && !dpm(c).getCameraDisabled(admin(c))
 
     // enabled=true -> camera chalu, false -> camera band
     fun setCamera(c: Context, enabled: Boolean): Boolean {
-        if (!isOwner(c)) {
-            log(c, "Device Owner nahi hai")
+        if (!isAdmin(c)) {
+            log(c, "Device Admin active nahi hai")
             return false
         }
         return try {
@@ -35,13 +36,6 @@ object Policy {
             log(c, "Error: ${e.message}")
             false
         }
-    }
-
-    fun clearOwner(c: Context) {
-        if (!isOwner(c)) return
-        dpm(c).setCameraDisabled(admin(c), false)
-        @Suppress("DEPRECATION")
-        dpm(c).clearDeviceOwnerApp(c.packageName)
     }
 
     // ---------- Password ----------
