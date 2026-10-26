@@ -3,8 +3,11 @@ package com.raj.camlock
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.hardware.biometrics.BiometricManager
+import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
 import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
@@ -12,11 +15,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import rikka.shizuku.Shizuku
 
 class MainActivity : Activity() {
 
     private lateinit var root: LinearLayout
+    private var resetMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,10 +30,6 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        // Session nahi chal raha to Guard chalu rakho
-        if (Policy.usable() && !Policy.isOn(this)) {
-            Thread { Policy.startGuard(applicationContext) }.start()
-        }
         render()
     }
 
@@ -56,6 +55,73 @@ class MainActivity : Activity() {
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
+    // Fingerprint se pehchaan; sahi hone par onOk chalta hai
+    private fun bioAuth(title: String, onOk: () -> Unit) {
+        val bm = getSystemService(BiometricManager::class.java)
+        val can = if (Build.VERSION.SDK_INT >= 30)
+            bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+        else
+            @Suppress("DEPRECATION") bm.canAuthenticate()
+        if (can != BiometricManager.BIOMETRIC_SUCCESS) {
+            toast("Fingerprint available nahi hai ya phone me add nahi hai")
+            return
+        }
+        val exec = mainExecutor
+        val builder = BiometricPrompt.Builder(this)
+            .setTitle(title)
+            .setNegativeButton("Cancel", exec) { _, _ -> }
+        if (Build.VERSION.SDK_INT >= 30) {
+            builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+        }
+        builder.build().authenticate(
+            CancellationSignal(), exec,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
+                    onOk()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    toast(errString?.toString() ?: "Fingerprint error")
+                }
+            }
+        )
+    }
+
+    private fun startSession(mins: Int) {
+        if (!Policy.setCamera(this, true)) {
+            toast("Camera ON nahi hua: " + Policy.lastLine(this))
+            render()
+            return
+        }
+        startForegroundService(
+            Intent(this, CamService::class.java)
+                .putExtra("endAt", System.currentTimeMillis() + mins * 60_000L)
+        )
+        render()
+    }
+
+    private fun passwordSetupScreen(title: String) {
+        root.addView(tv(title))
+        val p1 = edit("Naya password", true)
+        val p2 = edit("Password dobara", true)
+        root.addView(p1)
+        root.addView(p2)
+        root.addView(btn("Password save karo") {
+            val a = p1.text.toString()
+            val b = p2.text.toString()
+            when {
+                a.length < 4 -> toast("Kam se kam 4 akshar chahiye")
+                a != b -> toast("Dono password alag hain")
+                else -> {
+                    Policy.setPassword(this, a)
+                    resetMode = false
+                    toast("Password save ho gaya")
+                    render()
+                }
+            }
+        })
+    }
+
     private fun render() {
         val sv = ScrollView(this)
         root = LinearLayout(this).apply {
@@ -66,57 +132,31 @@ class MainActivity : Activity() {
         setContentView(sv)
         root.addView(tv("CamLock", 28f))
 
-        if (!Policy.shizukuReady()) {
+        // 1) Device Owner check
+        if (!Policy.isOwner(this)) {
             root.addView(
                 tv(
-                    "Shizuku chalu nahi hai.\n\nShizuku app kholo -> " +
-                        "\"Start via Wireless debugging\" -> phir yahan wapas aao."
+                    "Ye app abhi Device Owner nahi hai. Termux me ye chalao:\n\n" +
+                        "adb shell dpm set-device-owner com.raj.camlock/.AdminReceiver"
                 )
             )
-            root.addView(btn("Dobara check karo") { render() })
             return
         }
 
-        if (!Policy.hasPermission()) {
-            root.addView(tv("CamLock ko Shizuku ki permission chahiye."))
-            root.addView(btn("Shizuku permission do") {
-                try { Shizuku.requestPermission(100) } catch (e: Throwable) { toast("Error: ${e.message}") }
-            })
-            root.addView(btn("Permission de di, dobara check karo") { render() })
+        // 2) Password reset (fingerprint ke baad) ya pehli baar
+        if (resetMode) {
+            passwordSetupScreen("Fingerprint sahi tha. Naya password set karo.")
             return
         }
-
         if (!Policy.hasPassword(this)) {
-            root.addView(tv("Pehle apna password set karo (kam se kam 4 akshar)."))
-            val p1 = edit("Naya password", true)
-            val p2 = edit("Password dobara", true)
-            root.addView(p1)
-            root.addView(p2)
-            root.addView(btn("Password save karo") {
-                val a = p1.text.toString()
-                val b = p2.text.toString()
-                when {
-                    a.length < 4 -> toast("Kam se kam 4 akshar chahiye")
-                    a != b -> toast("Dono password alag hain")
-                    else -> {
-                        Policy.setPassword(this, a)
-                        Policy.setCamera(this, false)
-                        render()
-                    }
-                }
-            })
+            Policy.setCamera(this, false)
+            passwordSetupScreen("Pehle apna password set karo (kam se kam 4 akshar).")
             return
         }
 
+        // 3) Main screen
         val on = Policy.isOn(this)
         root.addView(tv(if (on) "Camera: ON" else "Camera: OFF (band)", 22f))
-        root.addView(
-            tv(
-                if (on) "Guard: ruka hua (session chal raha hai)"
-                else "Guard: " + if (Policy.guardRunning()) "chalu (har 1 sec camera band)" else "band",
-                14f
-            )
-        )
 
         val pw = edit("Password", true)
         val mins = edit("Kitne minute (1 se 240)", false)
@@ -124,23 +164,20 @@ class MainActivity : Activity() {
         root.addView(pw)
         root.addView(mins)
 
-        root.addView(btn("Camera ON karo") {
+        fun minutes() = (mins.text.toString().toIntOrNull() ?: 5).coerceIn(1, 240)
+
+        root.addView(btn("Camera ON karo (password)") {
             if (!Policy.check(this, pw.text.toString())) {
                 toast("Galat password")
                 return@btn
             }
-            val m = (mins.text.toString().toIntOrNull() ?: 5).coerceIn(1, 240)
-            if (!Policy.setCamera(this, true)) {
-                toast("Camera ON nahi hua: " + Policy.lastLine(this))
-                render()
-                return@btn
-            }
-            startForegroundService(
-                Intent(this, CamService::class.java)
-                    .putExtra("endAt", System.currentTimeMillis() + m * 60_000L)
-            )
             pw.setText("")
-            render()
+            startSession(minutes())
+        })
+
+        root.addView(btn("Camera ON karo (fingerprint)") {
+            val m = minutes()
+            bioAuth("Camera chalu karne ke liye") { startSession(m) }
         })
 
         root.addView(btn("Camera OFF karo") {
@@ -149,7 +186,25 @@ class MainActivity : Activity() {
             render()
         })
 
+        root.addView(btn("Password bhool gaye? Fingerprint se reset") {
+            bioAuth("Password reset ke liye") {
+                resetMode = true
+                render()
+            }
+        })
+
         root.addView(tv("\nRecord (naya upar):", 16f))
         root.addView(tv(Policy.logText(this).ifBlank { "abhi kuch nahi" }, 13f))
+
+        root.addView(btn("Device Owner hatao (password chahiye)") {
+            if (!Policy.check(this, pw.text.toString())) {
+                toast("Upar password daalo, phir dabao")
+                return@btn
+            }
+            startService(Intent(this, CamService::class.java).setAction(CamService.ACTION_STOP))
+            Policy.clearOwner(this)
+            toast("Device Owner hat gaya, camera normal")
+            render()
+        })
     }
 }
