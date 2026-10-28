@@ -197,5 +197,10 @@ class MainActivity : Activity() {
 
         root.addView(tv("\nActivity History:", 16f))
         root.addView(tv(Policy.logText(this).ifBlank { "Khali hai" }, 13f))
+        root.addView(btn("Clear History") {
+            Policy.clearLog(this)
+            toast("History clear ho gayi")
+            render()
+        })
     }
 }

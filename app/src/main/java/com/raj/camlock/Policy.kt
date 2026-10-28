@@ -61,11 +61,15 @@ object Policy {
     fun log(c: Context, msg: String) {
         val t = SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault()).format(Date())
         val old = (prefs(c).getString("log", "") ?: "")
-            .lines().filter { it.isNotBlank() }.take(29)
+            .lines().filter { it.isNotBlank() }.take(19)
         prefs(c).edit().putString("log", (listOf("$t  $msg") + old).joinToString("\n")).apply()
     }
 
     fun logText(c: Context): String = prefs(c).getString("log", "") ?: ""
+
+    fun clearLog(c: Context) {
+        prefs(c).edit().remove("log").apply()
+    }
 
     fun lastLine(c: Context): String = logText(c).lines().firstOrNull() ?: ""
 }
