@@ -3,6 +3,14 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 android {
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "camlock123"
+            keyAlias = "camlock"
+            keyPassword = "camlock123"
+        }
+    }
     namespace = "com.raj.camlock"
     compileSdk = 34
     defaultConfig {
